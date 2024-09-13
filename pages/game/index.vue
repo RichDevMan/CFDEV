@@ -1,0 +1,1833 @@
+<script lang="ts" setup>
+// import
+const { t } = useI18n()
+const siteStore = useSiteStore()
+const PlayerStore = usePlayerStore()
+const orderStore = useOrderStore()
+const { queryKlines, queryRounds } = useGameStore()
+const { getListenkey } = PlayerStore
+const { locale } = useI18n()
+const lang = locale.value
+const { queryInstruction, queryNews } = useSiteStore()
+const router = useRouter()
+const timeoutId = ref(null)
+
+// data
+const coinBoxChecked = ref(false)
+const record = ref({
+  title: '當前委託',
+  type: 'currentOrder',
+  search: true
+})
+const search = ref({
+  pair: '',
+  roundId: '',
+  dateRangeStart: '',
+  dateRangeEnd: ''
+})
+const showToolPopup = ref(false)
+const symbol = ref(Object.keys(PlayerStore.playerInfo.availablePairs)[0])
+const availableCurrency = ref([])
+const defaultTime = new Date(2000, 1, 1, 12, 0, 0)
+const socket = ref(null)
+const socketConnected = ref(false)
+const betData = ref({
+  symbol: '',
+  option: [],
+  amount: '',
+  roundId: ''
+})
+const recordList = ref([])
+const historyRecordList = ref([])
+// 圖表數據值
+const nowTimestamp = ref(null)
+const socketNewPrice = ref(null)
+const isFirstGet = ref(true)
+const createChartData = ref(null)
+const socketCurrentRoundCountdown = ref(0)
+const news = ref(null)
+const rule = ref(null)
+const disableBet = ref(false)
+const selectSymbol = () => {
+  closeWebSocket()
+  document.getElementById('coinBox').checked = false
+}
+// method
+const goPopup = async (title: string) => {
+  console.log('recordList', recordList)
+  record.value.title = title
+  showToolPopup.value = true
+  search.value.pair = symbol.value
+  if (title === '當前委託') {
+    record.value.type = 'currentOrder'
+    record.value.search = true
+    return
+  }
+  if (title === '歷史委託') {
+    record.value.type = 'historyOrder'
+    record.value.search = true
+    return
+  }
+  if (title === '歷史盤口') {
+    const response = await queryRounds({
+      pair: symbol.value
+    })
+    record.value.type = 'historyRecord'
+    historyRecordList.value = response.data.result
+    record.value.search = true
+    return
+  }
+  if (title === '網站公告') {
+    record.value.type = 'announcement'
+    record.value.search = false
+    return
+  }
+  if (title === '規則說明') {
+    record.value.type = 'rule'
+    record.value.search = false
+  }
+}
+const closePopup = () => {
+  showToolPopup.value = false
+}
+const connectRecordList = (title: String) => {
+  switch (title) {
+    case 'currentOrder':
+      return recordList.value.filter((item) => !item.closeAt)
+    case 'historyOrder':
+      return recordList.value.filter((item) => item.closeAt)
+  }
+}
+const addBetGameType = (type: string) => {
+  // if (betData.value.option.includes(type)) {
+  //   betData.value.option = betData.value.option.filter((item) => item !== type)
+  // } else {
+  //   betData.value.option.push(type)
+  // }
+  betData.value.option = []
+  betData.value.option.push(type)
+  console.log(betData.value.option)
+  document.getElementById('game-1').checked = false
+  document.getElementById('game-2').checked = false
+  document.getElementById('game-3').checked = false
+  document.getElementById('game-4').checked = false
+  document.getElementById('game-5').checked = false
+  document.getElementById('game-6').checked = false
+  document.getElementById('game-7').checked = false
+}
+const checkBetData = () => {
+  if (!disableBet.value) {
+    disableBet.value = true
+    try {
+      betData.value.symbol = symbol.value
+      console.log(betData.value)
+      const pairData = PlayerStore.playerInfo.availablePairs[symbol.value]
+      // console.log("pairData", pairData);
+      // banned action
+      if (pairData.banned) {
+        ElNotification({
+          message: pairData.message,
+          type: 'error',
+          showClose: false
+        })
+        return
+      }
+      if (betData.value.amount === '') {
+        ElNotification({
+          message: `${t('請輸入下單金額')}`,
+          type: 'error',
+          showClose: false
+        })
+        return
+      }
+      if (betData.value.option.length === 0) {
+        ElNotification({
+          message: `${t('請選擇參與遊戲模式')}`,
+          type: 'error',
+          showClose: false
+        })
+        return
+      }
+      if (parseFloat(betData.value.amount) < siteStore.siteData.minBetAmount) {
+        ElNotification({
+          message: ` ${t('最低下注金額為')} $ ${siteStore.siteData.minBetAmount}`,
+          type: 'error',
+          showClose: false
+        })
+        return
+      }
+      if (parseFloat(betData.value.amount) > siteStore.siteData.maxBetAmount) {
+        ElNotification({
+          message: `${t('最高下注金額為')} $ ${siteStore.siteData.maxBetAmount}`,
+          type: 'error',
+          showClose: false
+        })
+        return
+      }
+      setTimeout(
+        async () => {
+          const response = await orderStore.bet(betData.value)
+          if (response.success) {
+            ElMessageBox.alert(
+              //`
+              // <p style="margin:0 0 8px 0"> ${t('投注期別')}: ${response.data.roundId} </p>
+              // <p style="margin:0 0 8px 0"> ${t('投注匯率')}: ${
+              //   response.data.openPrice
+              // } </p>
+              // <p style="margin:0 0 8px 0"> ${t('下注金額')}: ${response.data.amount} </p>
+              // <p style="margin:0 0 8px 0"> ${t('下注類別')}: ${gameOptionNameList(
+              //   response.data.option
+              // )} </p>
+              // <p style="margin:0 0 8px 0"> ${t('時間')}: ${formatDate(
+              //   response.data.openAt
+              // )} </p>
+             //`,
+              `
+              <p style="margin: 26px 0;font-size: 18px"> ${t('下單成功')}</p>
+              `,
+              {
+                confirmButtonText: `${t('確認')}`,
+                center: true,
+                dangerouslyUseHTMLString: true
+              }
+            )
+          } else {
+            ElNotification({
+              title: response.data.message,
+              type: 'error',
+              showClose: false
+            })
+          }
+          clearBetData()
+          await PlayerStore.fetchInfo()
+          const queryOrderRes = await orderStore.queryOrder({
+            pair: symbol.value
+          })
+          recordList.value = queryOrderRes.data.result
+        },
+        (pairData.delay + 1) * 1000
+      )
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setTimeout(() => {
+        disableBet.value = false
+      }, 3000)
+    }
+  }
+}
+const gameOptionOdd = (type: number) => {
+  switch (type) {
+    case 0:
+      return PlayerStore.playerInfo.gameOptions[0].odds * 100 + '%'
+    case 1:
+      return PlayerStore.playerInfo.gameOptions[1].odds * 100 + '%'
+    case 2:
+      return PlayerStore.playerInfo.gameOptions[2].odds * 100 + '%'
+    case 3:
+      return PlayerStore.playerInfo.gameOptions[3].odds * 100 + '%'
+    case 4:
+      return PlayerStore.playerInfo.gameOptions[4].odds * 100 + '%'
+    case 5:
+      return PlayerStore.playerInfo.gameOptions[5].odds * 100 + '%'
+    case 6:
+      return PlayerStore.playerInfo.gameOptions[6].odds * 100 + '%'
+    default:
+      return ''
+  }
+}
+
+const showOption = (type: number) => {
+  switch (type) {
+    case 0:
+      return PlayerStore.playerInfo.gameOptions[0].isOpen
+    case 1:
+      return PlayerStore.playerInfo.gameOptions[1].isOpen
+    case 2:
+      return PlayerStore.playerInfo.gameOptions[2].isOpen
+    case 3:
+      return PlayerStore.playerInfo.gameOptions[3].isOpen
+    case 4:
+      return PlayerStore.playerInfo.gameOptions[4].isOpen
+    case 5:
+      return PlayerStore.playerInfo.gameOptions[5].isOpen
+    case 6:
+      return PlayerStore.playerInfo.gameOptions[6].isOpen
+    default:
+      return ''
+  }
+}
+
+const clearBetData = () => {
+  betData.value = {
+    symbol: '',
+    option: [],
+    amount: '',
+    roundId: ''
+  }
+  document.getElementById('game-1').checked = false
+  document.getElementById('game-2').checked = false
+  document.getElementById('game-3').checked = false
+  document.getElementById('game-4').checked = false
+  document.getElementById('game-5').checked = false
+  document.getElementById('game-6').checked = false
+  document.getElementById('game-7').checked = false
+}
+
+const initMilliseconds = (timestamp: any) => {
+  const newDate = new Date(timestamp)
+  newDate.setMilliseconds(0)
+  return newDate.getTime()
+}
+
+const randomVolume = () => {
+  return parseFloat((Math.random() * 100 + 1).toFixed(2))
+}
+
+const formatDate = (timestamp: string) => {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+const gameOptionNameList = (list: Array) => {
+  const result = []
+  list.forEach((item) => {
+    result.push(gameOptionName(item))
+  })
+  return result.join(', ')
+}
+const gameOptionName = (type: Number) => {
+  switch (type) {
+    case 0:
+      return `${t('高')}`
+    case 1:
+      return `${t('低')}`
+    case 2:
+      return `${t('單')}`
+    case 3:
+      return `${t('雙')}`
+    case 4:
+      return `${t('儲能')}`
+    case 5:
+      return `${t('釋出')}`
+    case 6:
+      return `${t('反指標')}`
+    default:
+      return ''
+  }
+}
+const gameResultName = (type: Number) => {
+  // 0 : 高、1 : 低、2 : 單、3 : 雙、4 : 漲、5 : 跌 6 : 合
+  switch (type) {
+    case 0:
+      return `${t('高')}`
+    case 1:
+      return `${t('反指標')}`
+    case 2:
+      return `${t('單')}`
+    case 3:
+      return `${t('雙')}`
+    case 4:
+      return `${t('儲能')}`
+    case 5:
+      return `${t('釋出')}`
+    case 6:
+      return `${t('和')}`
+    default:
+      return `${t('未知')}`
+  }
+}
+const getChartData = async (timestamp: any) => {
+  // 取得遠端資料
+  // 取 3 分鐘的資料
+  const now = new Date(nowTimestamp.value)
+  now.setSeconds(0, 0)
+  now.setMinutes(now.getMinutes() - 3)
+  const startTime = now.getTime()
+  const endTime = timestamp
+  const data = {
+    symbol: symbol.value,
+    interval: '1',
+    startTime,
+    endTime
+  }
+  const klineData = await queryKlines(data)
+  if (klineData.success) {
+    isFirstGet.value = false // 第一次獲取開關關閉
+    const { klines } = klineData.data
+    const newKLines = Object.entries(klines).map(([timestamp, value]) => {
+      const volume = randomVolume()
+      const turnover = Number(value.close) * volume
+      return {
+        timestamp: Number(timestamp) * 1000,
+        open: Number(value.open),
+        close: Number(value.close),
+        high: Number(value.high),
+        low: Number(value.low),
+        volume,
+        turnover
+      }
+    })
+    createChartData.value = { newKLines, time: timestamp }
+  }
+}
+
+const searchOrder = async () => {
+  const startDate = new Date(search.value.dateRangeStart)
+  search.value.dateRangeStart = startDate.getTime()
+  const endDate = new Date(search.value.dateRangeEnd)
+  search.value.dateRangeEnd = endDate.getTime()
+  console.log('searchOrder', search.value)
+  if (!search.value.dateRangeStart) {
+    delete search.value.dateRangeStart
+  }
+  if (!search.value.dateRangeEnd) {
+    delete search.value.dateRangeEnd
+  }
+  if (record.value.type !== 'historyRecord') {
+    const response = await orderStore.queryOrder(search.value)
+    if (response.success) {
+      recordList.value = response.data.result
+    } else {
+      ElNotification({
+        message: response.message,
+        type: 'error'
+      })
+    }
+  } else {
+    // 搜尋盤口
+    const response = await queryRounds(search.value)
+    if (response.success) {
+      historyRecordList.value = response.data.result
+    } else {
+      ElNotification({
+        message: response.message,
+        type: 'error'
+      })
+    }
+  }
+  search.value.dateRangeStart = ''
+  search.value.dateRangeEnd = ''
+  search.value.roundId = ''
+}
+
+const pickerOptions = {
+  daterange: {
+    maxTime: '', // 最大日期
+    minTime: '', // 最小日期
+    max: 30 // 限制范围 30天
+  }
+}
+const disabledDate = (time) => {
+  const threeMonthsAgo = new Date()
+  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+  return time.getTime() < threeMonthsAgo.getTime()
+}
+
+const betFormatNumber = (num) => {
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(0) + 'M'
+  } else if (num >= 1000) {
+    return (num / 1000).toFixed(0) + 'k'
+  } else {
+    return num.toString()
+  }
+}
+// ctyptoData
+const reconnected = ref(true)
+const closeWebSocket = async () => {
+  if (socket.value) {
+    socket.value.close()
+  }
+}
+// 連接 socket
+const startConnectWebSocket = async () => {
+  const getListenkeyRes = await getListenkey()
+  console.log('getListenkeyRes', getListenkeyRes)
+  const runtimeConfig = useRuntimeConfig()
+  const { SOCKETBASE } = runtimeConfig.public
+  socket.value = new WebSocket(
+    `${SOCKETBASE}/${getListenkeyRes.data.listenkey}`
+  )
+  socket.value.onopen = (event) => {
+    console.log('Connected to socket', event)
+    socketConnected.value = true
+  }
+  socket.value.onmessage = async (e) => {
+    const message = JSON.parse(e.data)
+    // console.log('收到來自 socket 的訊息', message);
+    const { event, data } = message
+    switch (event) {
+      case 'KLINE_UPDATE': {
+        // 右側列表數據
+        data.forEach((item) => {
+          if (availableCurrency.value.length === 0) {
+            if (
+              PlayerStore.playerInfo.availablePairs[item.symbol] &&
+              PlayerStore.playerInfo.availablePairs[item.symbol].isOpen
+            ) {
+              availableCurrency.value.push({
+                symbol: item.symbol,
+                price: [
+                  {
+                    open: parseFloat(item.price.open),
+                    close: parseFloat(item.price.close)
+                  }
+                ],
+                symbolData: PlayerStore.playerInfo.availablePairs[item.symbol]
+              })
+            }
+          } else if (
+            PlayerStore.playerInfo.availablePairs[item.symbol] &&
+            PlayerStore.playerInfo.availablePairs[item.symbol].isOpen
+          ) {
+            const currency = availableCurrency.value.find(
+              (currency) => currency.symbol === item.symbol
+            )
+            if (currency) {
+              currency.price.push({
+                open: parseFloat(
+                  currency.price[currency.price.length - 1].close
+                ),
+                close: parseFloat(item.price.close)
+              })
+            } else {
+              availableCurrency.value.push({
+                symbol: item.symbol,
+                price: [
+                  {
+                    open: parseFloat(item.price.open),
+                    close: parseFloat(item.price.close)
+                  }
+                ],
+                symbolData: PlayerStore.playerInfo.availablePairs[item.symbol]
+              })
+            }
+          }
+        })
+
+        // 圖表列表數據
+        const { timestamp: correctTimestamp } = message
+        const timestamp = initMilliseconds(correctTimestamp)
+        nowTimestamp.value = timestamp
+        const symbolData = data.find((item) => item.symbol === symbol.value)
+
+        // 已選擇數據整理
+        if (symbolData) {
+          const { price } = symbolData
+          // 數據整理
+          let newPrice = Object.entries(price).reduce((acc, [key, value]) => {
+            acc[key] = parseFloat(value)
+            return acc
+          }, {})
+          const volume = randomVolume()
+          const turnover = newPrice.close * volume
+          newPrice = {
+            timestamp,
+            ...newPrice,
+            turnover,
+            volume
+          }
+          socketNewPrice.value = newPrice
+
+          // 第一次取得所有數據 & 產生空資料
+          if (isFirstGet.value) getChartData(timestamp)
+        }
+        break
+      }
+      case 'SERVER_TIME': {
+        const { currentRoundId, currentRoundCountdown } = data
+        betData.value.roundId = currentRoundId
+        socketCurrentRoundCountdown.value = currentRoundCountdown
+        // console.log(data);
+        if (currentRoundCountdown === 59) {
+          await PlayerStore.fetchInfo()
+          const queryOrderRes = await orderStore.queryOrder({
+            pair: symbol.value
+          })
+          recordList.value = queryOrderRes.data.result
+        }
+        break
+      }
+      default:
+        break
+    }
+  }
+  socket.value.onclose = async () => {
+    console.log('Disconnected from socket')
+    isFirstGet.value = true
+    socketConnected.value = false
+    if (reconnected) {
+      await startConnectWebSocket()
+      console.log('reconnected to socket')
+    }
+  }
+
+  socket.value.onerror = (error) => {
+    socketConnected.value = false
+    console.error('WebSocket error:', error)
+  }
+}
+await onMounted(async () => {
+  await startConnectWebSocket()
+  console.log('symbol', symbol.value)
+  // const queryOrderRes = await orderStore.queryOrder({
+  //   pair
+  // })
+  // recordList.value = queryOrderRes.data.result\
+  const pair = symbol.value
+  const type = 'game'
+  const path = 'game'
+  // const queryInstructionRes = await queryInstruction(lang, type)
+  // rule.value = queryInstructionRes.data
+  // const queryNewsRes = await queryNews(lang, path)
+  // news.value = queryNewsRes.data
+  /** await Promise all  */
+  // const [queryOrderRes, queryInstructionRes, queryNewsRes] = await Promise.all([
+  //   orderStore.queryOrder({ pair }),
+  //   queryInstruction(lang, type),
+  //   queryNews(lang, path)
+  // ])
+
+  // // 處理響應結果
+  // recordList.value = queryOrderRes.data.result
+  // rule.value = queryInstructionRes.data
+  // news.value = queryNewsRes.data
+  /** await Promise all  */
+
+  /** await Promise then  */
+  // 開始加載數據（此處沒有使用 await，因此主線程不會被阻塞）
+  const queryOrderPromise = orderStore.queryOrder({ pair })
+  const queryInstructionPromise = queryInstruction(lang, type)
+  const queryNewsPromise = queryNews(lang, path)
+
+  // 使用 .then() 方法處理異步任務結果
+  queryOrderPromise
+    .then((queryOrderRes) => {
+      // 處理響應結果
+      recordList.value = queryOrderRes.data.result
+    })
+    .catch((error) => {
+      console.error('Error loading order data:', error)
+    })
+
+  queryInstructionPromise
+    .then((queryInstructionRes) => {
+      // 處理響應結果
+      rule.value = queryInstructionRes.data
+    })
+    .catch((error) => {
+      console.error('Error loading instruction data:', error)
+    })
+
+  queryNewsPromise
+    .then((queryNewsRes) => {
+      // 處理響應結果
+      news.value = queryNewsRes.data
+    })
+    .catch((error) => {
+      console.error('Error loading news data:', error)
+    })
+  /** await Promise then  */
+  const resetTimer = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId.value)
+    }
+    timeoutId.value = setTimeout(
+      () => {
+        navigateTo('/user')
+      },
+      siteStore.siteData?.gameCenterOutInterval
+        ? siteStore.siteData?.gameCenterOutInterval * 60 * 1000
+        : 5 * 60 * 1000
+    ) // 5 分钟
+  }
+  window.onload = resetTimer
+  window.onmousemove = resetTimer
+  window.onmousedown = resetTimer
+  window.ontouchstart = resetTimer
+  window.onclick = resetTimer
+  window.onscroll = resetTimer
+  window.onkeypress = resetTimer
+})
+
+onBeforeUnmount(() => {
+  reconnected.value = false
+  console.log('closeWebSocket', reconnected.value)
+  closeWebSocket()
+})
+</script>
+
+<template>
+  <div id="Base_Member" class="page">
+    <div class="head">
+      <div class="logo" @click="navigateTo(`/`)">
+        <img :src="siteStore.siteData.logo" />
+        <!-- <div class="title">{{ siteStore.siteData.gameName }}</div> -->
+      </div>
+      <div class="userInfo">
+        <div class="name">{{ PlayerStore.playerInfo.username }}</div>
+        <div class="wallet"></div>
+        <b>{{
+          new Intl.NumberFormat('zh-TW').format(PlayerStore.playerInfo.balance)
+        }}</b>
+      </div>
+    </div>
+    <div class="body">
+      <input
+        id="coinBox"
+        type="checkbox"
+        hidden="hidden"
+        :checked="coinBoxChecked"
+      />
+      <div class="bodyLeft">
+        <!-- <div class="leftItem" @click="goPopup('當前委託')">
+          <i class="fas fa-clipboard-list"></i>
+          <div>{{ $lang('當前委託') }}</div>
+        </div> -->
+        <div class="leftItem" @click="goPopup('歷史委託')">
+          <i class="fas fa-history"></i>
+          <div>{{ $lang('歷史委託') }}</div>
+        </div>
+        <!-- <div class="leftItem" @click="goPopup('歷史盤口')">
+          <i class="fas fa-award"></i>
+          <div>{{ $lang('歷史盤口') }}</div>
+        </div> -->
+        <!-- <div class="leftItem" @click="goPopup('網站公告')">
+          <i class="fas fa-bullhorn"></i>
+          <div>{{ $lang('網站公告') }}</div>
+        </div> -->
+        <!-- <div class="leftItem" @click="goPopup('規則說明')">
+          <i class="fas fa-question-circle"></i>
+          <div>{{ $lang('規則說明') }}</div>
+        </div> -->
+        <!-- <label for="coinBox" class="leftItem rankBtn"
+          ><i class="fas fa-chart-bar"></i>
+          <div>{{ $lang('交易類別') }}</div></label
+        > -->
+      </div>
+      <div id="TempPage" class="tempPage">
+        <div class="chartSection">
+          <div class="chart">
+            <gameChart
+              :symbol="symbol"
+              :socket-new-price="socketNewPrice"
+              :create-chart-data="createChartData"
+              :now-timestamp="nowTimestamp"
+              :socket-current-round-countdown="socketCurrentRoundCountdown"
+              :round-id="betData.roundId"
+            ></gameChart>
+          </div>
+          <div class="k-line-box">
+            <game-calculateionListSection />
+          </div>
+        </div>
+        <div class="controlBlock">
+          <div class="containerRow">
+            <div data-event="1" data-inputrow="" class="centerRow">
+              <input
+                id="game-1"
+                name="game-1"
+                type="checkbox"
+                hidden="hidden"
+                class="gameType"
+              />
+              <input
+                id="game-2"
+                name="game-2"
+                type="checkbox"
+                hidden="hidden"
+                class="gameType"
+              />
+              <input
+                id="game-3"
+                name="game-3"
+                type="checkbox"
+                hidden="hidden"
+                class="gameType"
+              />
+              <input
+                id="game-4"
+                name="game-4"
+                type="checkbox"
+                hidden="hidden"
+                class="gameType"
+              />
+              <input
+                id="game-5"
+                name="game-5"
+                type="checkbox"
+                hidden="hidden"
+                class="gameType"
+              />
+              <input
+                id="game-6"
+                name="game-6"
+                type="checkbox"
+                hidden="hidden"
+                class="gameType"
+              />
+              <input
+                id="game-7"
+                name="game-7"
+                type="checkbox"
+                hidden="hidden"
+                class="gameType"
+              />
+              <div class="leftBox">
+                <label
+                  v-if="showOption(0)"
+                  for="game-1"
+                  class=""
+                  @click="addBetGameType(0)"
+                  ><span>{{ $lang('高') }}</span>
+                  <span class="odds">{{ gameOptionOdd(0) }}</span></label
+                >
+                <label
+                  v-if="showOption(2)"
+                  for="game-3"
+                  class=""
+                  @click="addBetGameType(2)"
+                  ><span>{{ $lang('單') }}</span>
+                  <span class="odds">{{ gameOptionOdd(2) }}</span></label
+                >
+                <label
+                  v-if="showOption(1)"
+                  for="game-2"
+                  class=""
+                  @click="addBetGameType(1)"
+                  ><span>{{ $lang('低') }}</span>
+                  <span class="odds">{{ gameOptionOdd(1) }}</span></label
+                >
+                <label
+                  v-if="showOption(3)"
+                  for="game-4"
+                  class=""
+                  @click="addBetGameType(3)"
+                  ><span>{{ $lang('雙') }}</span>
+                  <span class="odds">{{ gameOptionOdd(3) }}</span></label
+                >
+                <label
+                  v-if="showOption(4)"
+                  for="game-5"
+                  class=""
+                  @click="addBetGameType(4)"
+                  ><span>{{ $lang('儲能') }}</span>
+                  <!-- <span class="odds">{{ gameOptionOdd(4) }}</span> -->
+                </label>
+                <label
+                  v-if="showOption(5)"
+                  for="game-6"
+                  class=""
+                  @click="addBetGameType(5)"
+                  ><span>{{ $lang('釋出') }}</span>
+                  <!-- <span class="odds">{{ gameOptionOdd(5) }}</span> -->
+                </label>
+              </div>
+              <!-- <div class="rightBox">
+                <label
+                  v-if="showOption(6)"
+                  for="game-7"
+                  class=""
+                  @click="addBetGameType(6)"
+                  ><span>{{ $lang('反指標') }}</span>
+                  <span class="odds">{{ gameOptionOdd(6) }}</span></label
+                >
+              </div> -->
+            </div>
+            <div class="bottomRow">
+              <div class="totalBox">
+                <label for="keyInput" class="inputBox"
+                  ><span>{{ $lang('自行輸入金額') }}</span>
+                  <div class="outerBtn hidden">
+                    <i class="far fa-caret-square-up"></i>
+                  </div>
+                  <input
+                    id="keyInput"
+                    v-model="betData.amount"
+                    v-trim-input
+                    type="text"
+                    name="totalView"
+                    autocomplete="off"
+                    data-min="1"
+                    data-max="5000000"
+                  />
+                  <a class="mobileQuickSelect">
+                    <input id="mobileQuickSelect" type="checkbox" hidden />
+                    <label for="mobileQuickSelect">
+                      <i class="fa-solid fa-caret-up"></i>
+                    </label>
+                    <div class="mobileQuickSelectPopup">
+                      <label for="mobileQuickSelect">
+                        <div class="selectContent">
+                          <!-- <a @click="betData.amount = '100'">100</a>
+                          <a @click="betData.amount = '1000'">1k</a>
+                          <a @click="betData.amount = '10000'">10k</a>
+                          <a @click="betData.amount = '1000000'">1M</a>
+                          <a @click="betData.amount = '10000000'">10M</a> -->
+                          <a
+                            @click="betData.amount = `${Number(item)}`"
+                            v-for="item in siteStore.siteData.betAmounts"
+                          >
+                            {{ betFormatNumber(item) }}
+                          </a>
+                        </div>
+                      </label>
+                    </div>
+                  </a>
+                </label>
+                <div data-quickselect="" class="quickSelect">
+                  <!-- <span @click="betData.amount = '100'">100</span>
+                  <span @click="betData.amount = '500'">500</span>
+                  <span @click="betData.amount = '800'">800</span> -->
+                  <span
+                    @click="betData.amount = `${Number(item)}`"
+                    v-for="item in siteStore.siteData.betAmounts"
+                    >{{ betFormatNumber(item) }}</span
+                  >
+                </div>
+              </div>
+              <div class="btnBlock">
+                <button type="button" class="reBtn" @click="clearBetData()">
+                  {{ $lang('取消') }}
+                </button>
+                <button
+                  type="button"
+                  class="checkBtn"
+                  :disabled="disableBet"
+                  @click="checkBetData()"
+                >
+                  {{ $lang('確定') }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- <div class="bodyRight">
+        <input
+          id="rightTab1"
+          type="radio"
+          name="bodyRightTab"
+          hidden="hidden"
+          :checked="true"
+        />
+        <input
+          id="rightTab2"
+          type="radio"
+          name="bodyRightTab"
+          hidden="hidden"
+        />
+        <div class="title">{{ $lang('交易類別') }}</div>
+        <div class="rightTabRow">
+          <label for="rightTab1" class="leftBorder">{{ $lang('即時') }}</label>
+          <label for="rightTab2">{{ $lang('收盤') }}</label>
+        </div>
+        <div class="rightItemRow">
+          <div class="rightItemList">
+            <a
+              v-for="item in availableCurrency"
+              :key="item.symbol"
+              class="rightItem"
+              :class="{ active: symbol === item.symbol }"
+              @click="(symbol = item.symbol), selectSymbol()"
+              ><span class="itemImg">
+                <img
+                  :src="PlayerStore.playerInfo.availablePairs[item.symbol].icon"
+                />
+              </span>
+              <span data-itemname="" class="itemName">{{
+                item.symbolData.label ||
+                item.symbolData.name ||
+                item.symbolData.symbol
+              }}</span>
+              <span
+                :data-type="
+                  item.price[item.price.length - 1].close >
+                  item.price[item.price.length - 1].open
+                    ? 'up'
+                    : 'down'
+                "
+                class="itemInfo"
+                ><b class="now">{{
+                  item.price[item.price.length - 1].close
+                }}</b>
+                <b class="last">{{
+                  item.price[item.price.length - 1].close
+                }}</b>
+                <i class="fa-solid fa-angles-up"></i></span
+            ></a>
+          </div>
+        </div>
+      </div> -->
+      <div v-if="showToolPopup" class="popup">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 class="modal-title">{{ record.title }}</h2>
+            <button type="button" data-dismiss="modal" @click="closePopup">
+              {{ $lang('關閉') }}
+            </button>
+          </div>
+          <div class="modal-body modal-body-sp">
+            <div data-type="1" class="log">
+              <div
+                v-if="record.type !== 'announcement' && record.type !== 'rule'"
+                class="searchRow"
+              >
+                <div class="coinSelect">
+                  <select
+                    v-model="search.pair"
+                    name="coin"
+                    @change="searchOrder"
+                  >
+                    <option
+                      v-for="item in availableCurrency"
+                      :key="item.symbol"
+                      :value="item.symbol"
+                    >
+                      {{
+                        item.symbolData.label ||
+                        item.symbolData.name ||
+                        item.symbolData.symbol
+                      }}
+                    </option>
+                  </select>
+                </div>
+                <label for="inputSearch" class="inputDate"
+                  ><i class="fas fa-search"></i>
+                  <input
+                    id="inputSearch"
+                    v-model="search.roundId"
+                    v-trim-input
+                    type="text"
+                    name="number"
+                    :placeholder="`${$lang('請輸入期號')}`"
+                /></label>
+                <label for="dateStart" class="inputDate"
+                  ><i class="fas fa-calendar-alt"></i>
+                  <el-date-picker
+                    v-model="search.dateRangeStart"
+                    type="datetime"
+                    :placeholder="`${$lang('起始時間')}`"
+                    :default-time="defaultTime"
+                    :disabled-date="disabledDate"
+                  >
+                  </el-date-picker>
+                </label>
+                <label for="dateEnd" class="inputDate"
+                  ><i class="fas fa-calendar-alt"></i>
+                  <el-date-picker
+                    v-model="search.dateRangeEnd"
+                    type="datetime"
+                    :placeholder="`${$lang('結束時間')}`"
+                    :default-time="defaultTime"
+                    :disabled-date="disabledDate"
+                  >
+                  </el-date-picker>
+                </label>
+                <button type="button" class="searchBtn" @click="searchOrder">
+                  {{ $lang('搜尋') }}
+                </button>
+              </div>
+              <div class="dataBlock">
+                <!-- currentOrder -->
+                <div v-if="record.type === 'currentOrder'" class="modal-1">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{{ $lang('時間/幣種') }}</th>
+                        <th>{{ $lang('投注內容') }}</th>
+                        <th>{{ $lang('投注金額') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="(item, index) in connectRecordList(
+                          'currentOrder'
+                        )"
+                        :key="index"
+                      >
+                        <td>
+                          <div>{{ formatDate(item.openAt) }}</div>
+                          <div>{{ item.symbol }}</div>
+                        </td>
+                        <td>
+                          <div>
+                            {{ $lang('期號') }}: <span>{{ item.roundId }}</span>
+                          </div>
+                          <div>
+                            {{ $lang('賠率') }}:
+                            <span>{{ item.odds }}</span>
+                          </div>
+                          <div v-if="item.option.length > 0">
+                            {{ $lang('內容') }}:
+                            <span
+                              v-for="optionItem in item.option"
+                              :key="optionItem"
+                              class="gameOptionSpan"
+                              >{{ gameOptionName(optionItem) }}</span
+                            >
+                          </div>
+                          <div v-else>
+                            {{ $lang('內容') }}:
+                            <span class="gameOptionSpan">
+                              {{ gameOptionName(item.option) }}</span
+                            >
+                          </div>
+                          <div>
+                            {{ $lang('匯率') }}:
+                            <span>{{
+                              new Intl.NumberFormat('zh-TW', {
+                                minimumFractionDigits: 4,
+                                maximumFractionDigits: 6
+                              }).format(item.openPrice)
+                            }}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div>
+                            {{ $lang('金額') }}:
+                            <span>
+                              {{
+                                new Intl.NumberFormat('zh-TW').format(
+                                  item.amount
+                                )
+                              }}</span
+                            >
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <!-- historyOrder -->
+                <div v-if="record.type === 'historyOrder'" class="modal-1">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{{ $lang('時間/幣種') }}</th>
+                        <th>{{ $lang('投注內容') }}</th>
+                        <th>{{ $lang('投注金額') }}</th>
+                        <th style="text-align: center">{{ $lang('輸贏') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="(item, index) in connectRecordList(
+                          'historyOrder'
+                        )"
+                        :key="index"
+                      >
+                        <td>
+                          <div>{{ formatDate(item.openAt) }}</div>
+                          <div>{{ item.symbol }}</div>
+                        </td>
+                        <td>
+                          <div>
+                            {{ $lang('期號') }}: <span>{{ item.roundId }}</span>
+                          </div>
+                          <div>
+                            {{ $lang('賠率') }}:
+                            <span>{{ item.odds }}</span>
+                          </div>
+                          <div v-if="item.option.length > 0">
+                            {{ $lang('內容') }}:
+                            <span
+                              v-for="optionItem in item.option"
+                              :key="optionItem"
+                              class="gameOptionSpan"
+                              >{{ gameOptionName(optionItem) }}</span
+                            >
+                          </div>
+                          <div v-else>
+                            {{ $lang('內容') }}:
+                            <span class="gameOptionSpan">
+                              {{ gameOptionName(item.option) }}</span
+                            >
+                          </div>
+                          <div>
+                            {{ $lang('匯率') }}:
+                            <span>{{
+                              new Intl.NumberFormat('zh-TW', {
+                                minimumFractionDigits: 4,
+                                maximumFractionDigits: 6
+                              }).format(item.openPrice)
+                            }}</span>
+                          </div>
+                          <div>
+                            {{ $lang('結束') }}:
+                            <span>{{
+                              new Intl.NumberFormat('zh-TW', {
+                                minimumFractionDigits: 4,
+                                maximumFractionDigits: 6
+                              }).format(item.closePrice)
+                            }}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div>
+                            <span>
+                              {{
+                                new Intl.NumberFormat('zh-TW').format(
+                                  item.amount
+                                )
+                              }}</span
+                            >
+                          </div>
+                        </td>
+                        <td>
+                          <div style="text-align: center">
+                            <span>{{ item.profit }}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div v-if="record.type === 'historyRecord'" class="modal-1">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{{ $lang('期號/類別') }}</th>
+                        <th>{{ $lang('盤口') }}</th>
+                        <th>{{ $lang('結果') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="(item, index) in historyRecordList"
+                        :key="index"
+                      >
+                        <td>
+                          <div>{{ item.roundId }}</div>
+                          <div>{{ item.name }}</div>
+                        </td>
+                        <td>
+                          <div>
+                            {{
+                              new Intl.NumberFormat('zh-TW', {
+                                minimumFractionDigits: 4,
+                                maximumFractionDigits: 6
+                              }).format(item.closePirce)
+                            }}
+                          </div>
+                        </td>
+                        <td class="gameResultName">
+                          <div
+                            v-for="resultItem in item.result"
+                            :key="resultItem"
+                            class="gameResultNameItem"
+                          >
+                            {{ gameResultName(resultItem) }}
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div v-if="record.type === 'announcement'" class="modal-3">
+                  <label
+                    v-for="(item, index) in news.result"
+                    :key="index"
+                    class="bulItem"
+                  >
+                    <input :id="item.title" type="checkbox" />
+                    <div class="title">
+                      <span class="titleBox">{{ item.title }}</span>
+                    </div>
+                    <div class="content" v-html="item.content"></div>
+                  </label>
+                </div>
+                <div v-if="record.type === 'rule'" class="modal-4">
+                  <div v-for="(item, index) in rule.result" :key="index">
+                    <div v-html="item.content"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped lang="sass">
+@import '@/assets/sass/game/model1/TempPage.min.css'
+.page
+  position: relative
+  width: 100dvw
+  height: 100dvh
+</style>
+
+<style scoped lang="sass">
+.head
+  background-color: #191f2d
+  height: 80px
+  width: 100%
+  display: flex
+  flex-flow: row nowrap
+  align-items: center
+  justify-content: flex-start
+  padding: 0 15px
+  border-bottom: 1px solid #363c4e
+  .logo
+    margin-right: auto
+    font-size: 28px
+    color: var(--font-color-1)
+    display: flex
+    flex-flow: row nowrap
+    align-items: center
+    font-weight: 700
+    img
+      height: 50px
+      display: block
+      margin-right: 10px
+    .title
+      color: #8c8f96
+      font-size: 28px
+      font-weight: 700
+  .userInfo
+    color: #f9761e
+    font-weight: 400
+    font-size: 14px
+    text-align: right
+</style>
+
+<style scoped lang="sass">
+.body
+  display: flex
+  flex-flow: row nowrap
+  align-items: flex-start
+  justify-content: flex-start
+  height: 100dvh
+  width: 100%
+  #coinBox:checked ~ .bodyRight
+    -webkit-transform: translateX(0)
+    transform: translateX(0)
+</style>
+
+<style scoped lang="sass">
+.bodyLeft
+  min-width: 115px
+  padding: 20px 0 0 0
+  height: calc(100% - 80px)
+  background-color: #191f2d
+  border-right: 1px solid #363c4e
+  @media screen and (max-width: 1024px)
+    position: fixed
+    bottom: 0
+    left: 0
+    width: 100%
+    flex: 1 1 100%
+    -ms-flex: 1 1 100%
+    height: 80px
+    border-top: 1px solid #363c4e
+    border-right: 0
+    overflow-y: hidden
+    display: flex
+    flex-flow: row nowrap
+    align-items: center
+    justify-content: center
+    z-index: 3
+    padding-top: 5px
+  .leftItem
+    text-align: center
+    color: #fff
+    font-size: 13px
+    padding: 10px
+    display: block
+    cursor: pointer
+    transition: all .3s ease
+    font-weight: 700
+    margin-bottom: 0
+    cursor: pointer
+    &:hover
+      background-color: #ffffff0d
+    @media screen and (max-width: 1024px)
+      font-size: 12px
+    svg
+      font-size: 200%
+      margin-bottom: 10px
+  .rankBtn
+    display: none
+    @media screen and (max-width: 1024px)
+      display: block
+</style>
+
+<style scoped lang="sass">
+.bodyRight
+  width: 300px
+  background-color: #21293c
+  height: 100%
+  border-left: 1px solid #363c4e
+  @media screen and (max-width: 1024px)
+    flex: 0 0 270px
+    position: fixed
+    right: 0
+    top: 80px
+    z-index: 3
+    height: calc(100% - 80px - 80px)
+    transform: translateX(100%)
+    transition: all .3s ease
+  .title
+    padding: 10px 20px
+    font-size: 18px
+    color: #e8e8e8
+    font-weight: 700
+  .rightTabRow
+    display: flex
+    flex-flow: row wrap
+    align-items: center
+    width: 100%
+    position: relative
+  .rightTabRow::after
+    content: " "
+    width: 50%
+    display: inline-block
+    height: 2px
+    background-color: #f9761e
+    -webkit-transition: all ease .2s
+    transition: all ease .2s
+  label
+    width: 50%
+    text-align: center
+    padding: 10px 5px
+    color: #fff
+    font-weight: 700
+    font-size: 15px
+    cursor: pointer
+  .leftBorder
+    border-right: 1px solid #363c4e
+  #rightTab2:checked ~ .rightTabRow::after
+    -webkit-transform: translateX(100%)
+    transform: translateX(100%)
+  #rightTab1:checked ~ .rightItemRow .rightItemList .rightItem .itemInfo .last
+    display: none
+  #rightTab2:checked ~ .rightItemRow .rightItemList .rightItem .itemInfo .now
+    display: none
+  #rightTab2:checked ~ .rightItemRow .rightItemList .rightItem .itemInfo svg
+    display: none
+</style>
+
+<style scoped lang="sass">
+.tempPage
+  height: 100%
+  width: calc(100vw - 380px)
+  // background-image: url(@/assets/gameImage/bg-img.jpg)
+  background-position: 50%
+  background-size: cover
+  background-repeat: no-repeat
+  color: #fff
+  position: relative
+  z-index: 1
+  @media screen and (max-width: 1024px)
+    flex: 1 1 auto
+</style>
+
+<style scoped lang="sass">
+.rightItemRow
+  margin-top: 10px
+  overflow-y: auto
+  height: calc(100% - 109px)
+  .rightItemList
+    padding: 0 0 30px 0
+  .rightItem
+    display: flex
+    flex-flow: row nowrap
+    align-items: center
+    width: 100%
+    padding: 10px 15px
+    transition: all .2s ease
+    cursor: pointer
+    &:hover
+      background-color: #ffffff0d
+    .itemImg
+      background-position: 100% 10.81081%
+      width: 30px
+      height: 30px
+      border-radius: 50%
+      // background-image: url(@/assets/gameImage/item.png)
+      background-size: 100% auto
+      background-repeat: no-repeat
+      display: inline-block
+    .itemName
+      color: #fff
+      font-size: 14px
+      margin-right: auto
+      padding-left: 10px
+      font-weight: 700
+    .itemInfo
+      color: #fff
+      svg
+        margin: 0 0 0 5px
+    .itemInfo[data-type]
+      color: #fff
+    .itemInfo[data-type="up"] *:not(.last)
+      color: #1972cc
+      -webkit-animation: colorUp 1s ease-in infinite forwards
+      animation: colorUp 1s ease-in infinite forwards
+    .itemInfo[data-type="up"] i::before
+      content: "\f102"
+    .itemInfo[data-type="down"] *:not(.last)
+      color: #059f7b
+      -webkit-animation: colorDown 1s ease-in infinite forwards
+      animation: colorDown 1s ease-in infinite forwards
+    .itemInfo[data-type="down"] svg
+        transform: rotate(180deg)
+    @keyframes colorUp
+      0%,40%
+        color: #059f7b
+      100%
+        color: white
+    @keyframes colorDown
+      0%,40%
+        color: #1972cc
+      100%
+        color: white
+  .rightItem.active
+    background-color: #ffffff0d
+</style>
+
+<style scoped lang="sass">
+.controlBlock
+  height: 125px
+  width: 100%
+  padding: 10px 0
+  .containerRow
+    display: flex
+    align-items: stretch
+    height: 100%
+    max-width: 992px
+    padding: 0 10px
+    width: 100%
+    margin: 0 auto
+    flex-flow: row wrap
+    align-content: flex-start
+</style>
+
+<style scoped lang="sass">
+.centerRow
+  width: calc(55% - 8px)
+  margin-right: 8px
+  display: flex
+  flex-flow: row wrap
+  align-items: stretch
+  height: 100%
+.centerRow[data-event="1"] .leftBox
+  flex: 1 1 70%
+.centerRow .leftBox
+  display: flex
+  flex-flow: row wrap
+  align-content: flex-start
+  align-items: center
+  height: 100%
+.centerRow[data-event="1"] .leftBox label
+  width: calc(50% - 4px)
+  height: calc(50% - 4px)
+.centerRow .leftBox label[for=game-1]
+  background-color: #1972cc
+.centerRow .leftBox label
+  display: flex
+  flex-flow: row nowrap
+  align-items: center
+  justify-content: space-between
+  color: #fff
+  font-size: 17px
+  font-weight: 700
+  padding: 0 10px
+  border-radius: 3px
+  cursor: pointer
+  margin-bottom: 0
+.centerRow[data-event="1"] .leftBox label:last-of-type
+  margin-top: 8px
+.centerRow[data-event="1"] .leftBox label:nth-last-of-type(2)
+  margin-top: 8px
+.centerRow .leftBox label[for=game-2]
+  background-color: #059f7b
+.centerRow .leftBox label:nth-of-type(2)
+  margin-left: auto
+.centerRow .leftBox label[for=game-3]
+  background-color: #7d8189
+.leftBox label:nth-of-type(4)
+  margin-left: auto
+.centerRow .leftBox label[for=game-4]
+  background-color: #7d8189
+.centerRow[data-event="1"] .rightBox label
+  flex: 1 1 calc(50% - 8px)
+.centerRow label[for=game-7]
+  background-color: #1166c7
+  height: 100%
+.centerRow[data-event="1"] .rightBox
+  padding-left: 8px
+.centerRow .rightBox label
+  margin-bottom: 0
+  justify-content: center
+  color: #fff
+  font-size: 16px
+  font-weight: 700
+  cursor: pointer
+  border-radius: 3px
+  display: flex
+  flex-flow: row wrap
+  align-items: center
+  align-content: center
+  padding: 0 10px
+.bottomRow
+  width: 45%
+  height: 100%
+  display: flex
+  flex-flow: row nowrap
+  align-items: center
+  position: relative
+.bottomRow .totalBox
+  width: 70%
+  height: 100%
+.bottomRow .inputBox
+  width: 100%
+  background-color: #3f475e
+  border-radius: 3px
+  padding: 5px 15px
+  color: #fff
+  height: calc(70% - 5px)
+  margin-bottom: 5px
+  cursor: pointer
+  display: flex
+  flex-flow: row nowrap
+  align-items: flex-end
+  position: relative
+.bottomRow .inputBox span
+  display: block
+  width: 100%
+  font-weight: 700
+  font-size: 16px
+  position: absolute
+  left: 15px
+  top: 5px
+  pointer-events: none
+  opacity: .3
+.bottomRow .inputBox input
+  background-color: transparent
+  border: 0
+  text-align: center
+  width: 100%
+  color: #fff
+  font-size: 20px
+  font-weight: 700
+  outline: none
+  cursor: pointer
+.bottomRow .quickSelect
+  height: 30%
+  display: flex
+  flex-flow: row nowrap
+  align-items: center
+  justify-content: space-between
+.bottomRow .quickSelect span
+  width: calc(33.3334% - 3.3334px)
+  height: 100%
+  display: flex
+  flex-flow: row nowrap
+  align-items: center
+  justify-content: center
+  font-size: 16px
+  font-weight: 700
+  background-color: #3f475e
+  cursor: pointer
+  transition: all .2s ease
+.bottomRow .btnBlock
+  width: calc(30% - 8px)
+  margin-left: 8px
+  height: 100%
+.bottomRow .reBtn
+  width: 100%
+  outline: 0
+  height: calc(50% - 2.5px)
+  font-weight: 700
+  font-size: 18px
+  display: flex
+  flex-flow: row nowrap
+  align-items: center
+  justify-content: center
+  background-color: transparent
+  transition: all .15s ease
+  cursor: pointer
+  white-space: nowrap
+  border: 4px solid #aeaeae
+  border-radius: 3px
+  color: #de7b6b
+  margin-bottom: 5px
+.bottomRow .checkBtn
+  width: 100%
+  outline: 0
+  height: calc(50% - 2.5px)
+  font-weight: 700
+  font-size: 18px
+  display: flex
+  flex-flow: row nowrap
+  align-items: center
+  justify-content: center
+  background-color: transparent
+  transition: all .15s ease
+  cursor: pointer
+  white-space: nowrap
+  border: 4px solid #ec742d
+  border-radius: 3px
+  color: #ec742d
+@media screen and (max-width: 1024px)
+  .centerRow
+    width: 100%
+    margin-right: 0
+    height: 60%
+  .bottomRow
+    height: calc(40% - 4px)
+    margin-top: 4px
+    width: 100%
+  .controlBlock
+    position: fixed
+    bottom: calc(var(--head-height) + 20px)
+    left: 0
+    height: auto
+</style>
+
+<style scoped lang="sass">
+.chartSection
+  width: 100%
+  height: calc(100% - 210px)
+  overflow-y: auto
+  @media screen and (max-width: 1024px)
+    height: calc(100% - 310px)
+  @media screen and (max-width: 768px)
+    height: calc(100% - 270px)
+</style>
+
+<style scoped>
+.popup {
+  position: fixed;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgb(0, 0, 0);
+  background-color: rgba(0, 0, 0, 0.4);
+  transition: opacity 0.15s linear;
+  padding: 0 40px;
+}
+.dataBody {
+  padding: 10px 0;
+}
+.gameOptionSpan {
+  padding: 0 5px;
+}
+.inputDate :deep(.el-input__prefix) {
+  display: none;
+}
+.inputDate input {
+  padding: 5px;
+  margin: 0 1px;
+}
+.inputDate svg {
+  margin: 0 5px 0 0;
+  color: #fff;
+}
+.bulItem input[type='checkbox'] {
+  display: none;
+}
+.bulItem .content {
+  display: none;
+}
+.bulItem input[type='checkbox']:checked ~ .content {
+  display: block;
+}
+.gameResultName {
+  display: flex;
+}
+.gameResultNameItem {
+  padding: 0 5px;
+  font-size: 16px;
+}
+@media screen and (max-width: 768px) {
+  .popup {
+    padding: 0 10px;
+    height: 92%;
+  }
+}
+input {
+  margin: 0;
+}
+</style>
+
+<style>
+.el-input__wrapper {
+  background-color: #00000000;
+  border: 1px solid #00000000;
+  box-shadow: none;
+}
+</style>
+
+<style>
+.chart {
+  height: 60%;
+}
+.k-line-box {
+  height: 40%;
+  width: 100%;
+  /* overflow: hidden; */
+}
+
+.k-line-box .tradingview-widget-container {
+  height: 100%;
+  width: 100%;
+}
+
+.k-line-box #tradingview_a45bd {
+  height: 100%;
+}
+
+@media screen and (max-width: 992px) {
+  .k-line-box {
+    width: 100%;
+    height: 40%;
+    max-width: 100%;
+  }
+}
+</style>
+
+<style scoped lang="sass">
+.mobileQuickSelect
+  position: relative
+  display: none
+  @media screen and (max-width: 768px)
+    display: block
+    font-size: 12px
+    color: #fff
+    text-align: center
+    padding: 0 0 8px 0
+    svg
+      font-size: 20px
+  input[type='checkbox']:checked ~ .mobileQuickSelectPopup
+    display: block
+  input[type='checkbox']:checked ~ label svg
+    transform: rotate(180deg)
+  .mobileQuickSelectPopup
+    position: absolute
+    width: 230px
+    background-color: #323e61
+    top: -30px
+    left: -210px
+    display: none
+    .selectContent
+      width: 100%
+      display: flex
+      justify-content: space-around
+      align-items: center
+      padding: 0 5px 0
+</style>

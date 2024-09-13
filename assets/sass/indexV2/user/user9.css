@@ -1,0 +1,17 @@
+.v-settings .v-item-group>* {
+    cursor: pointer
+}
+
+.v-settings__item {
+    border-width: 3px;
+    border-style: solid
+}
+
+.v-settings--active {
+    border-color: #00cae3!important
+}
+
+.ghost[data-v-7eb7b104] {
+    opacity: .5;
+    background: #c8ebfb
+}
